@@ -663,7 +663,7 @@ func (h *scaleHandler) GetScaledObjectMetricsByUID(ctx context.Context, scaledOb
 	var matchingMetrics []external_metrics.ExternalMetricValue
 	var fallbackMetrics []external_metrics.ExternalMetricValue
 
-	metricscollector.RecordScaledObjectErrorWithUID(scaledObjectNamespace, scaledObject.Name, string(scaledObject.UID), err)
+	metricscollector.RecordScaledObjectError(scaledObjectNamespace, scaledObject.Name, err)
 
 	isScalerError := false
 
@@ -717,10 +717,10 @@ func (h *scaleHandler) GetScaledObjectMetricsByUID(ctx context.Context, scaledOb
 						logger.Error(err, "error pairing triggers & metrics for compositeScaler")
 					}
 					
-					metrics, _, latency, err := cache.GetMetricsAndActivityForScaler(ctx, triggerIndex, metricName)
-					if latency != -1 {
-						metricscollector.RecordScalerLatencyWithUID(scaledObjectNamespace, scaledObject.Name, string(scaledObject.UID), scalerConfig.TriggerName, triggerIndex, metricName, true, latency)
-					}
+				metrics, _, latency, err := cache.GetMetricsAndActivityForScaler(ctx, triggerIndex, metricName)
+				if latency != -1 {
+					metricscollector.RecordScalerLatency(scaledObjectNamespace, scaledObject.Name, scalerConfig.TriggerName, triggerIndex, metricName, true, latency)
+				}
 					
 					result.metricName = metricName
 					result.triggerName = scalerConfig.TriggerName
@@ -748,7 +748,7 @@ func (h *scaleHandler) GetScaledObjectMetricsByUID(ctx context.Context, scaledOb
 		} else {
 			for _, metric := range metrics {
 				metricValue := metric.Value.AsApproximateFloat64()
-				metricscollector.RecordScalerMetricWithUID(scaledObjectNamespace, scaledObject.Name, string(scaledObject.UID), result.triggerName, result.triggerIndex, metric.MetricName, true, metricValue)
+				metricscollector.RecordScalerMetric(scaledObjectNamespace, scaledObject.Name, result.triggerName, result.triggerIndex, metric.MetricName, true, metricValue)
 			}
 			if shouldSendRawMetrics(RawMetricsHPA) {
 				go h.sendWhenSubscribed(scaledObject.Name, scaledObjectNamespace, result.triggerName, metrics)
@@ -758,7 +758,7 @@ func (h *scaleHandler) GetScaledObjectMetricsByUID(ctx context.Context, scaledOb
 			isFallbackActive = true
 			fallbackMetrics = append(fallbackMetrics, metrics...)
 		}
-		metricscollector.RecordScalerErrorWithUID(scaledObjectNamespace, scaledObject.Name, string(scaledObject.UID), result.triggerName, result.triggerIndex, result.metricName, true, err)
+		metricscollector.RecordScalerError(scaledObjectNamespace, scaledObject.Name, result.triggerName, result.triggerIndex, result.metricName, true, err)
 		matchingMetrics = append(matchingMetrics, metrics...)
 	}
 	
