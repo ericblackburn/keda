@@ -25,6 +25,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
+	"k8s.io/metrics/pkg/apis/external_metrics"
 	"k8s.io/metrics/pkg/apis/external_metrics/v1beta1"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
@@ -49,17 +50,31 @@ type GrpcServer struct {
 // GetMetrics returns metrics values in form of ExternalMetricValueList for specified ScaledObject reference
 func (s *GrpcServer) GetMetrics(ctx context.Context, in *api.ScaledObjectRef) (*v1beta1.ExternalMetricValueList, error) {
 	v1beta1ExtMetrics := &v1beta1.ExternalMetricValueList{}
-	extMetrics, err := (*s.scalerHandler).GetScaledObjectMetrics(ctx, in.Name, in.Namespace, in.MetricName)
-	if err != nil {
-		return v1beta1ExtMetrics, fmt.Errorf("error when getting metric values %w", err)
+
+	var extMetrics *external_metrics.ExternalMetricValueList
+	var err error
+
+	// Try UID-based lookup first (preferred)
+	if in.Uid != "" {
+		extMetrics, err = (*s.scalerHandler).GetScaledObjectMetricsByUID(ctx, in.Uid, in.Namespace, in.MetricName)
+		if err != nil {
+			return v1beta1ExtMetrics, fmt.Errorf("error when getting metric values by UID %w", err)
+		}
+		log.V(1).WithValues("scaledObjectUID", in.Uid, "scaledObjectNamespace", in.Namespace, "metrics", v1beta1ExtMetrics).Info("Providing metrics by UID")
+	} else {
+		// DEPRECATED: Fallback to name-based lookup for backwards compatibility
+		// TODO: Remove this fallback after v2.X when all clients have been migrated to UID-based lookups
+		extMetrics, err = (*s.scalerHandler).GetScaledObjectMetrics(ctx, in.Name, in.Namespace, in.MetricName)
+		if err != nil {
+			return v1beta1ExtMetrics, fmt.Errorf("error when getting metric values by name %w", err)
+		}
+		log.V(1).WithValues("scaledObjectName", in.Name, "scaledObjectNamespace", in.Namespace, "metrics", v1beta1ExtMetrics).Info("Providing metrics by name (deprecated)")
 	}
 
 	err = v1beta1.Convert_external_metrics_ExternalMetricValueList_To_v1beta1_ExternalMetricValueList(extMetrics, v1beta1ExtMetrics, nil)
 	if err != nil {
 		return v1beta1ExtMetrics, fmt.Errorf("error when converting metric values %w", err)
 	}
-
-	log.V(1).WithValues("scaledObjectName", in.Name, "scaledObjectNamespace", in.Namespace, "metrics", v1beta1ExtMetrics).Info("Providing metrics")
 
 	return v1beta1ExtMetrics, nil
 }

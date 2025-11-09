@@ -188,6 +188,11 @@ func (p *PromMetrics) RecordScalerMetric(namespace string, scaledResource string
 	scalerMetricsValue.With(getLabels(namespace, scaledResource, scaler, triggerIndex, metric, isScaledObject)).Set(value)
 }
 
+// RecordScalerMetricWithUID create a measurement of the external metric with UID for unique identification
+func (p *PromMetrics) RecordScalerMetricWithUID(namespace string, scaledResource string, scaledResourceUID string, scaler string, triggerIndex int, metric string, isScaledObject bool, value float64) {
+	scalerMetricsValue.With(getLabelsWithUID(namespace, scaledResource, scaledResourceUID, scaler, triggerIndex, metric, isScaledObject)).Set(value)
+}
+
 // DeleteScalerMetrics deletes the scaler-related metrics so that we don't report stale values when trigger is gone
 func (p *PromMetrics) DeleteScalerMetrics(namespace string, scaledResource string, isScaledObject bool) {
 	scalerMetricsValue.DeletePartialMatch(prometheus.Labels{"namespace": namespace, "scaledObject": scaledResource, "type": getResourceType(isScaledObject)})
@@ -199,6 +204,11 @@ func (p *PromMetrics) DeleteScalerMetrics(namespace string, scaledResource strin
 // RecordScalerLatency create a measurement of the latency to external metric
 func (p *PromMetrics) RecordScalerLatency(namespace string, scaledResource string, scaler string, triggerIndex int, metric string, isScaledObject bool, value time.Duration) {
 	scalerMetricsLatency.With(getLabels(namespace, scaledResource, scaler, triggerIndex, metric, isScaledObject)).Set(value.Seconds())
+}
+
+// RecordScalerLatencyWithUID create a measurement of the latency to external metric with UID for unique identification
+func (p *PromMetrics) RecordScalerLatencyWithUID(namespace string, scaledResource string, scaledResourceUID string, scaler string, triggerIndex int, metric string, isScaledObject bool, value time.Duration) {
+	scalerMetricsLatency.With(getLabelsWithUID(namespace, scaledResource, scaledResourceUID, scaler, triggerIndex, metric, isScaledObject)).Set(value.Seconds())
 }
 
 // RecordScalableObjectLatency create a measurement of the latency executing scalable object loop
@@ -242,9 +252,38 @@ func (p *PromMetrics) RecordScalerError(namespace string, scaledResource string,
 	}
 }
 
+// RecordScalerErrorWithUID counts the number of errors with UID for unique identification
+func (p *PromMetrics) RecordScalerErrorWithUID(namespace string, scaledResource string, scaledResourceUID string, scaler string, triggerIndex int, metric string, isScaledObject bool, err error) {
+	if err != nil {
+		scalerErrors.With(getLabelsWithUID(namespace, scaledResource, scaledResourceUID, scaler, triggerIndex, metric, isScaledObject)).Inc()
+		p.RecordScaledObjectErrorWithUID(namespace, scaledResource, scaledResourceUID, err)
+		return
+	}
+	// initialize metric with 0 if not already set
+	_, errscaler := scalerErrors.GetMetricWith(getLabelsWithUID(namespace, scaledResource, scaledResourceUID, scaler, triggerIndex, metric, isScaledObject))
+	if errscaler != nil {
+		log.Error(errscaler, "Unable to record metrics: %v")
+	}
+}
+
 // RecordScaledObjectError counts the number of errors with the scaled object
 func (p *PromMetrics) RecordScaledObjectError(namespace string, scaledObject string, err error) {
 	labels := prometheus.Labels{"namespace": namespace, "scaledObject": scaledObject}
+	if err != nil {
+		scaledObjectErrors.With(labels).Inc()
+		return
+	}
+	// initialize metric with 0 if not already set
+	_, errscaledobject := scaledObjectErrors.GetMetricWith(labels)
+	if errscaledobject != nil {
+		log.Error(errscaledobject, "Unable to record metrics: %v")
+		return
+	}
+}
+
+// RecordScaledObjectErrorWithUID counts the number of errors with the scaled object with UID for unique identification
+func (p *PromMetrics) RecordScaledObjectErrorWithUID(namespace string, scaledObject string, scaledObjectUID string, err error) {
+	labels := prometheus.Labels{"namespace": namespace, "scaledObject": scaledObject, "scaledObjectUID": scaledObjectUID}
 	if err != nil {
 		scaledObjectErrors.With(labels).Inc()
 		return
@@ -274,6 +313,18 @@ func (p *PromMetrics) RecordScaledJobError(namespace string, scaledJob string, e
 
 func getLabels(namespace string, scaledObject string, scaler string, triggerIndex int, metric string, isScaledObject bool) prometheus.Labels {
 	return prometheus.Labels{"namespace": namespace, "scaledObject": scaledObject, "scaler": scaler, "triggerIndex": strconv.Itoa(triggerIndex), "metric": metric, "type": getResourceType(isScaledObject)}
+}
+
+func getLabelsWithUID(namespace string, scaledObject string, scaledObjectUID string, scaler string, triggerIndex int, metric string, isScaledObject bool) prometheus.Labels {
+	return prometheus.Labels{
+		"namespace":       namespace,
+		"scaledObject":    scaledObject,
+		"scaledObjectUID": scaledObjectUID,
+		"scaler":          scaler,
+		"triggerIndex":    strconv.Itoa(triggerIndex),
+		"metric":          metric,
+		"type":            getResourceType(isScaledObject),
+	}
 }
 
 func getResourceType(isScaledObject bool) string {

@@ -96,8 +96,13 @@ func NewGrpcClient(ctx context.Context, url, certDir, authority, confOptions str
 	return &grpcClient, nil
 }
 
-func (c *GrpcClient) GetMetrics(ctx context.Context, scaledObjectName, scaledObjectNamespace, metricName string) (*external_metrics.ExternalMetricValueList, error) {
-	v1beta1ExtMetrics, err := c.client.GetMetrics(ctx, &api.ScaledObjectRef{Name: scaledObjectName, Namespace: scaledObjectNamespace, MetricName: metricName})
+func (c *GrpcClient) GetMetrics(ctx context.Context, scaledObjectName, scaledObjectNamespace, metricName, scaledObjectUID string) (*external_metrics.ExternalMetricValueList, error) {
+	v1beta1ExtMetrics, err := c.client.GetMetrics(ctx, &api.ScaledObjectRef{
+		Name:       scaledObjectName, 
+		Namespace:  scaledObjectNamespace, 
+		MetricName: metricName,
+		Uid:        scaledObjectUID,
+	})
 	if err != nil {
 		return nil, err
 	}

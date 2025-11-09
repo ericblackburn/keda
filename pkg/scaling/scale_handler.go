@@ -65,6 +65,7 @@ type ScaleHandler interface {
 	ClearScalersCache(ctx context.Context, scalableObject interface{}) error
 
 	GetScaledObjectMetrics(ctx context.Context, scaledObjectName, scaledObjectNamespace, metricName string) (*external_metrics.ExternalMetricValueList, error)
+	GetScaledObjectMetricsByUID(ctx context.Context, scaledObjectUID, scaledObjectNamespace, metricName string) (*external_metrics.ExternalMetricValueList, error)
 	SubscribeMetric(ctx context.Context, subscriber string, metricMetadata *api.ScaledObjectRef) bool
 	UnsubscribeMetric(ctx context.Context, subscriber string, metadata *api.ScaledObjectRef) bool
 	GetRawMetricsChan(subscriber string) (rawMetrics chan RawMetrics, done chan bool)
@@ -312,6 +313,37 @@ func (h *scaleHandler) getScalersCacheForScaledObject(ctx context.Context, scale
 	key := kedav1alpha1.GenerateIdentifier("ScaledObject", scaledObjectNamespace, scaledObjectName)
 
 	return h.performGetScalersCache(ctx, key, nil, nil, "ScaledObject", scaledObjectNamespace, scaledObjectName)
+}
+
+// getScalersCacheForScaledObjectByUID returns cache for input ScaledObject, referenced by UID and namespace
+// This method uses the field indexer to efficiently look up ScaledObject by UID
+func (h *scaleHandler) getScalersCacheForScaledObjectByUID(ctx context.Context, scaledObjectUID, scaledObjectNamespace string) (*cache.ScalersCache, *kedav1alpha1.ScaledObject, error) {
+	// Use field indexer to find ScaledObject by UID
+	scaledObjectList := &kedav1alpha1.ScaledObjectList{}
+	err := h.client.List(ctx, scaledObjectList,
+		client.InNamespace(scaledObjectNamespace),
+		client.MatchingFields{"metadata.uid": scaledObjectUID})
+	if err != nil {
+		log.Error(err, "failed to list ScaledObjects by UID", "uid", scaledObjectUID, "namespace", scaledObjectNamespace)
+		return nil, nil, err
+	}
+
+	if len(scaledObjectList.Items) == 0 {
+		err := fmt.Errorf("no ScaledObject found with UID %s in namespace %s", scaledObjectUID, scaledObjectNamespace)
+		log.Error(err, "ScaledObject not found")
+		return nil, nil, err
+	}
+
+	if len(scaledObjectList.Items) > 1 {
+		// This should never happen as UIDs are unique, but let's handle it
+		log.Info("Warning: multiple ScaledObjects found with same UID, using first", "uid", scaledObjectUID, "count", len(scaledObjectList.Items))
+	}
+
+	scaledObject := &scaledObjectList.Items[0]
+	key := scaledObject.GenerateIdentifier()
+
+	scalersCache, err := h.performGetScalersCache(ctx, key, scaledObject, nil, "", "", "")
+	return scalersCache, scaledObject, err
 }
 
 // performGetScalersCache returns cache for input scalableObject, it is common code used by GetScalersCache() and getScalersCacheForScaledObject() methods
@@ -613,6 +645,139 @@ func (h *scaleHandler) GetScaledObjectMetrics(ctx context.Context, scaledObjectN
 	}
 
 	// handle scalingModifiers here and simply return the matchingMetrics
+	matchingMetrics = modifiers.HandleScalingModifiers(scaledObject, matchingMetrics, metricTriggerPairList, isFallbackActive, fallbackMetrics, cache, logger)
+	return &external_metrics.ExternalMetricValueList{
+		Items: matchingMetrics,
+	}, nil
+}
+
+// GetScaledObjectMetricsByUID returns metrics for specified metric name for a ScaledObject identified by its UID and namespace.
+// It uses the field indexer to efficiently look up the ScaledObject by UID, then delegates to the existing metrics retrieval logic.
+func (h *scaleHandler) GetScaledObjectMetricsByUID(ctx context.Context, scaledObjectUID, scaledObjectNamespace, metricsName string) (*external_metrics.ExternalMetricValueList, error) {
+	cache, scaledObject, err := h.getScalersCacheForScaledObjectByUID(ctx, scaledObjectUID, scaledObjectNamespace)
+	if err != nil {
+		return nil, fmt.Errorf("error getting scalers by UID %w", err)
+	}
+
+	logger := log.WithValues("scaledObject.Namespace", scaledObjectNamespace, "scaledObject.Name", scaledObject.Name, "scaledObject.UID", scaledObjectUID)
+	var matchingMetrics []external_metrics.ExternalMetricValue
+	var fallbackMetrics []external_metrics.ExternalMetricValue
+
+	metricscollector.RecordScaledObjectErrorWithUID(scaledObjectNamespace, scaledObject.Name, string(scaledObject.UID), err)
+
+	isScalerError := false
+
+	// returns all relevant metrics for current scaler (standard is one metric,
+	// composite scaler gets all external metrics for further computation)
+	metricsArray, err := h.getTrueMetricArray(ctx, metricsName, scaledObject)
+	if err != nil {
+		logger.Error(err, "error getting true metrics array, probably because of invalid cache")
+	}
+	metricTriggerPairList := make(map[string]string)
+	isFallbackActive := false
+
+	// let's check metrics for all scalers in a ScaledObject
+	// Similar logic to GetScaledObjectMetrics but using WithUID metric recording methods
+	type metricResult struct {
+		metrics           []external_metrics.ExternalMetricValue
+		metricTriggerPair map[string]string
+		metricName        string
+		triggerName       string
+		triggerIndex      int
+		metricSpec        v2.MetricSpec
+		err               error
+	}
+	allScalers, scalerConfigs := cache.GetScalers()
+	matchingMetricsChan := make(chan metricResult, len(metricsArray))
+	wg := sync.WaitGroup{}
+	for triggerIndex := 0; triggerIndex < len(allScalers); triggerIndex++ {
+		triggerName := strings.Replace(fmt.Sprintf("%T", allScalers[triggerIndex]), "*scalers.", "", 1)
+		if scalerConfigs[triggerIndex].TriggerName != "" {
+			triggerName = scalerConfigs[triggerIndex].TriggerName
+		}
+
+		metricSpecs, err := cache.GetMetricSpecForScalingForScaler(ctx, triggerIndex)
+		if err != nil {
+			isScalerError = true
+			logger.Error(err, "error getting metric spec for the scaler", "scaler", triggerName)
+			cache.Recorder.Event(scaledObject, corev1.EventTypeWarning, eventreason.KEDAScalerFailed, err.Error())
+		}
+
+		for _, spec := range metricSpecs {
+			if spec.External == nil {
+				continue
+			}
+			if modifiers.ArrayContainsElement(spec.External.Metric.Name, metricsArray) {
+				metricName := spec.External.Metric.Name
+				wg.Add(1)
+				go func(results chan metricResult, wg *sync.WaitGroup, metricName string, triggerIndex int, scalerConfig scalersconfig.ScalerConfig, spec v2.MetricSpec) {
+					result := metricResult{}
+					result.metricTriggerPair, err = modifiers.GetPairTriggerAndMetric(scaledObject, metricName, scalerConfig.TriggerName)
+					if err != nil {
+						logger.Error(err, "error pairing triggers & metrics for compositeScaler")
+					}
+					
+					metrics, _, latency, err := cache.GetMetricsAndActivityForScaler(ctx, triggerIndex, metricName)
+					if latency != -1 {
+						metricscollector.RecordScalerLatencyWithUID(scaledObjectNamespace, scaledObject.Name, string(scaledObject.UID), scalerConfig.TriggerName, triggerIndex, metricName, true, latency)
+					}
+					
+					result.metricName = metricName
+					result.triggerName = scalerConfig.TriggerName
+					result.triggerIndex = triggerIndex
+					result.metricSpec = spec
+					result.metrics = metrics
+					result.err = err
+					results <- result
+					wg.Done()
+				}(matchingMetricsChan, &wg, metricName, triggerIndex, scalerConfigs[triggerIndex], spec)
+			}
+		}
+	}
+
+	wg.Wait()
+	close(matchingMetricsChan)
+	for result := range matchingMetricsChan {
+		for key, value := range result.metricTriggerPair {
+			metricTriggerPairList[key] = value
+		}
+		metrics, fallbackActive, err := fallback.GetMetricsWithFallback(ctx, h.client, h.scaleClient, result.metrics, result.err, result.metricName, scaledObject, result.metricSpec)
+		if err != nil {
+			isScalerError = true
+			logger.Error(err, "error getting metric for trigger", "trigger", result.triggerName)
+		} else {
+			for _, metric := range metrics {
+				metricValue := metric.Value.AsApproximateFloat64()
+				metricscollector.RecordScalerMetricWithUID(scaledObjectNamespace, scaledObject.Name, string(scaledObject.UID), result.triggerName, result.triggerIndex, metric.MetricName, true, metricValue)
+			}
+			if shouldSendRawMetrics(RawMetricsHPA) {
+				go h.sendWhenSubscribed(scaledObject.Name, scaledObjectNamespace, result.triggerName, metrics)
+			}
+		}
+		if fallbackActive {
+			isFallbackActive = true
+			fallbackMetrics = append(fallbackMetrics, metrics...)
+		}
+		metricscollector.RecordScalerErrorWithUID(scaledObjectNamespace, scaledObject.Name, string(scaledObject.UID), result.triggerName, result.triggerIndex, result.metricName, true, err)
+		matchingMetrics = append(matchingMetrics, metrics...)
+	}
+	
+	if isScalerError {
+		err := h.ClearScalersCache(ctx, scaledObject)
+		if err != nil {
+			logger.Error(err, "error clearing scalers cache")
+		}
+		logger.V(1).Info("scaler error encountered, clearing scaler cache")
+	}
+
+	if !isFallbackActive && isScalerError {
+		return nil, fmt.Errorf("metric:%s encountered error", metricsName)
+	}
+
+	if len(matchingMetrics) == 0 {
+		return nil, fmt.Errorf("no matching metrics found for %s", metricsName)
+	}
+
 	matchingMetrics = modifiers.HandleScalingModifiers(scaledObject, matchingMetrics, metricTriggerPairList, isFallbackActive, fallbackMetrics, cache, logger)
 	return &external_metrics.ExternalMetricValueList{
 		Items: matchingMetrics,

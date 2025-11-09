@@ -95,17 +95,31 @@ func (p *KedaProvider) GetExternalMetric(ctx context.Context, namespace string, 
 		logger.Info("Connection to KEDA Metrics Service gRPC server has been successfully established", "server", p.grpcClient.GetServerURL())
 	}
 
-	// selector is in form: `scaledobject.keda.sh/name: scaledobject-name`
+	// Try UID-based selector first (new approach)
+	scaledObjectUID := selector.Get(kedav1alpha1.ScaledObjectUIDLabel)
+	
+	if scaledObjectUID != "" {
+		// UID-based lookup (preferred)
+		metrics, err := p.grpcClient.GetMetrics(ctx, "", namespace, info.Metric, scaledObjectUID)
+		logger.V(1).WithValues("scaledObjectUID", scaledObjectUID, "scaledObjectNamespace", namespace, "metrics", metrics).Info("Receiving metrics by UID")
+		return metrics, err
+	}
+	
+	// DEPRECATED: Fallback to name-based selector for backwards compatibility
+	// TODO: Remove this fallback after v2.X when all HPAs have been migrated to UID-based selectors
 	scaledObjectName := selector.Get(kedav1alpha1.ScaledObjectOwnerAnnotation)
 	if scaledObjectName == "" {
-		err := fmt.Errorf("scaledObject name is not specified")
-		logger.Error(err, fmt.Sprintf("please specify scaledObject name, it needs to be set as value of label selector %q on the query", kedav1alpha1.ScaledObjectOwnerAnnotation))
-
+		err := fmt.Errorf("scaledObject identifier not specified - neither UID nor name found in selector")
+		logger.Error(err, "please specify either UID or name in the metric selector")
 		return &external_metrics.ExternalMetricValueList{}, err
 	}
 
-	metrics, err := p.grpcClient.GetMetrics(ctx, scaledObjectName, namespace, info.Metric)
-	logger.V(1).WithValues("scaledObjectName", scaledObjectName, "scaledObjectNamespace", namespace, "metrics", metrics).Info("Receiving metrics")
+	logger.Info("Using deprecated name-based lookup for ScaledObject - please update HPA to use UID selector", 
+		"scaledObjectName", scaledObjectName, 
+		"namespace", namespace)
+	
+	metrics, err := p.grpcClient.GetMetrics(ctx, scaledObjectName, namespace, info.Metric, "")
+	logger.V(1).WithValues("scaledObjectName", scaledObjectName, "scaledObjectNamespace", namespace, "metrics", metrics).Info("Receiving metrics by name (deprecated)")
 
 	return metrics, err
 }
