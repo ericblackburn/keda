@@ -258,6 +258,13 @@ func (o *OtelMetrics) RecordScalerMetric(namespace string, scaledResource string
 	otelScalerMetricVals = append(otelScalerMetricVals, otelScalerMetric)
 }
 
+func (o *OtelMetrics) RecordScalerMetricWithUID(namespace string, scaledResource string, scaledResourceUID string, scaler string, triggerIndex int, metric string, isScaledObject bool, value float64) {
+	otelScalerMetric := OtelMetricFloat64Val{}
+	otelScalerMetric.val = value
+	otelScalerMetric.measurementOption = getScalerMeasurementOptionWithUID(namespace, scaledResource, scaledResourceUID, scaler, triggerIndex, metric, isScaledObject)
+	otelScalerMetricVals = append(otelScalerMetricVals, otelScalerMetric)
+}
+
 func (o *OtelMetrics) DeleteScalerMetrics(string, string, bool) {
 	// noop for OTel
 }
@@ -288,6 +295,19 @@ func (o *OtelMetrics) RecordScalerLatency(namespace string, scaledResource strin
 	otelScalerMetricsLatencyValD := OtelMetricFloat64Val{}
 	otelScalerMetricsLatencyValD.val = float64(value.Milliseconds())
 	otelScalerMetricsLatencyValD.measurementOption = getScalerMeasurementOption(namespace, scaledResource, scaler, triggerIndex, metric, isScaledObject)
+	otelScalerMetricsLatencyValDeprecated = append(otelScalerMetricsLatencyValDeprecated, otelScalerMetricsLatencyValD)
+}
+
+// RecordScalerLatencyWithUID create a measurement of the latency to external metric with UID
+func (o *OtelMetrics) RecordScalerLatencyWithUID(namespace string, scaledResource string, scaledResourceUID string, scaler string, triggerIndex int, metric string, isScaledObject bool, value time.Duration) {
+	otelScalerMetricsLatency := OtelMetricFloat64Val{}
+	otelScalerMetricsLatency.val = value.Seconds()
+	otelScalerMetricsLatency.measurementOption = getScalerMeasurementOptionWithUID(namespace, scaledResource, scaledResourceUID, scaler, triggerIndex, metric, isScaledObject)
+	otelScalerMetricsLatencyVals = append(otelScalerMetricsLatencyVals, otelScalerMetricsLatency)
+
+	otelScalerMetricsLatencyValD := OtelMetricFloat64Val{}
+	otelScalerMetricsLatencyValD.val = float64(value.Milliseconds())
+	otelScalerMetricsLatencyValD.measurementOption = getScalerMeasurementOptionWithUID(namespace, scaledResource, scaledResourceUID, scaler, triggerIndex, metric, isScaledObject)
 	otelScalerMetricsLatencyValDeprecated = append(otelScalerMetricsLatencyValDeprecated, otelScalerMetricsLatencyValD)
 }
 
@@ -384,11 +404,32 @@ func (o *OtelMetrics) RecordScalerError(namespace string, scaledResource string,
 	}
 }
 
+// RecordScalerErrorWithUID counts the number of errors with UID for unique identification
+func (o *OtelMetrics) RecordScalerErrorWithUID(namespace string, scaledResource string, scaledResourceUID string, scaler string, triggerIndex int, metric string, isScaledObject bool, err error) {
+	if err != nil {
+		otScalerErrorsCounter.Add(context.Background(), 1, getScalerMeasurementOptionWithUID(namespace, scaledResource, scaledResourceUID, scaler, triggerIndex, metric, isScaledObject))
+		o.RecordScaledObjectErrorWithUID(namespace, scaledResource, scaledResourceUID, err)
+		return
+	}
+}
+
 // RecordScaledObjectError counts the number of errors with the scaled object
 func (o *OtelMetrics) RecordScaledObjectError(namespace string, scaledObject string, err error) {
 	opt := api.WithAttributes(
 		attribute.Key("namespace").String(namespace),
 		attribute.Key("scaledObject").String(scaledObject))
+	if err != nil {
+		otScaledObjectErrorsCounter.Add(context.Background(), 1, opt)
+		return
+	}
+}
+
+// RecordScaledObjectErrorWithUID counts the number of errors with the scaled object with UID for unique identification
+func (o *OtelMetrics) RecordScaledObjectErrorWithUID(namespace string, scaledObject string, scaledObjectUID string, err error) {
+	opt := api.WithAttributes(
+		attribute.Key("namespace").String(namespace),
+		attribute.Key("scaledObject").String(scaledObject),
+		attribute.Key("scaledObjectUID").String(scaledObjectUID))
 	if err != nil {
 		otScaledObjectErrorsCounter.Add(context.Background(), 1, opt)
 		return
@@ -459,6 +500,27 @@ func getScalerMeasurementOption(namespace string, scaledResource string, scaler 
 	return api.WithAttributes(
 		attribute.Key("namespace").String(namespace),
 		attribute.Key("scaledJob").String(scaledResource),
+		attribute.Key("scaler").String(scaler),
+		attribute.Key("triggerIndex").String(strconv.Itoa(triggerIndex)),
+		attribute.Key("metric").String(metric),
+	)
+}
+
+func getScalerMeasurementOptionWithUID(namespace string, scaledResource string, scaledResourceUID string, scaler string, triggerIndex int, metric string, isScaledObject bool) api.MeasurementOption {
+	if isScaledObject {
+		return api.WithAttributes(
+			attribute.Key("namespace").String(namespace),
+			attribute.Key("scaledObject").String(scaledResource),
+			attribute.Key("scaledObjectUID").String(scaledResourceUID),
+			attribute.Key("scaler").String(scaler),
+			attribute.Key("scalerIndex").String(strconv.Itoa(triggerIndex)),
+			attribute.Key("metric").String(metric),
+		)
+	}
+	return api.WithAttributes(
+		attribute.Key("namespace").String(namespace),
+		attribute.Key("scaledJob").String(scaledResource),
+		attribute.Key("scaledJobUID").String(scaledResourceUID),
 		attribute.Key("scaler").String(scaler),
 		attribute.Key("triggerIndex").String(strconv.Itoa(triggerIndex)),
 		attribute.Key("metric").String(metric),

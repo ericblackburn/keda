@@ -183,6 +183,15 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Add field indexer for ScaledObject UID to enable efficient lookups by UID
+	if err := mgr.GetFieldIndexer().IndexField(ctx, &kedav1alpha1.ScaledObject{}, "metadata.uid", func(rawObj client.Object) []string {
+		scaledObject := rawObj.(*kedav1alpha1.ScaledObject)
+		return []string{string(scaledObject.UID)}
+	}); err != nil {
+		setupLog.Error(err, "unable to create field indexer for ScaledObject UID")
+		os.Exit(1)
+	}
+
 	// default to 3 seconds if they don't pass the env var
 	globalHTTPTimeoutMS, err := kedautil.ResolveOsEnvInt("KEDA_HTTP_DEFAULT_TIMEOUT", 3000)
 	if err != nil {

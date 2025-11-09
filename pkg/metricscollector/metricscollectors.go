@@ -39,11 +39,13 @@ var (
 
 type MetricsCollector interface {
 	RecordScalerMetric(namespace string, scaledResource string, scaler string, triggerIndex int, metric string, isScaledObject bool, value float64)
+	RecordScalerMetricWithUID(namespace string, scaledResource string, scaledResourceUID string, scaler string, triggerIndex int, metric string, isScaledObject bool, value float64)
 
 	DeleteScalerMetrics(namespace string, scaledResource string, isScaledObject bool)
 
 	// RecordScalerLatency create a measurement of the latency to external metric
 	RecordScalerLatency(namespace string, scaledResource string, scaler string, triggerIndex int, metric string, isScaledObject bool, value time.Duration)
+	RecordScalerLatencyWithUID(namespace string, scaledResource string, scaledResourceUID string, scaler string, triggerIndex int, metric string, isScaledObject bool, value time.Duration)
 
 	// RecordScalableObjectLatency create a measurement of the latency executing scalable object loop
 	RecordScalableObjectLatency(namespace string, name string, isScaledObject bool, value time.Duration)
@@ -56,9 +58,11 @@ type MetricsCollector interface {
 
 	// RecordScalerError counts the number of errors occurred in trying to get an external metric used by the HPA
 	RecordScalerError(namespace string, scaledResource string, scaler string, triggerIndex int, metric string, isScaledObject bool, err error)
+	RecordScalerErrorWithUID(namespace string, scaledResource string, scaledResourceUID string, scaler string, triggerIndex int, metric string, isScaledObject bool, err error)
 
 	// RecordScaledObjectError counts the number of errors with the scaled object
 	RecordScaledObjectError(namespace string, scaledObject string, err error)
+	RecordScaledObjectErrorWithUID(namespace string, scaledObject string, scaledObjectUID string, err error)
 
 	// RecordScaledJobError counts the number of errors with the scaled job
 	RecordScaledJobError(namespace string, scaledJob string, err error)
@@ -202,6 +206,31 @@ func RecordCloudEventEmittedError(namespace string, cloudeventsource string, eve
 func RecordCloudEventQueueStatus(namespace string, value int) {
 	for _, element := range collectors {
 		element.RecordCloudEventQueueStatus(namespace, value)
+	}
+}
+
+// WithUID variants that include UID for unique identification
+func RecordScalerMetricWithUID(namespace string, scaledObject string, scaledObjectUID string, scaler string, triggerIndex int, metric string, isScaledObject bool, value float64) {
+	for _, element := range collectors {
+		element.RecordScalerMetricWithUID(namespace, scaledObject, scaledObjectUID, scaler, triggerIndex, metric, isScaledObject, value)
+	}
+}
+
+func RecordScalerLatencyWithUID(namespace string, scaledObject string, scaledObjectUID string, scaler string, triggerIndex int, metric string, isScaledObject bool, value time.Duration) {
+	for _, element := range collectors {
+		element.RecordScalerLatencyWithUID(namespace, scaledObject, scaledObjectUID, scaler, triggerIndex, metric, isScaledObject, value)
+	}
+}
+
+func RecordScalerErrorWithUID(namespace string, scaledObject string, scaledObjectUID string, scaler string, triggerIndex int, metric string, isScaledObject bool, err error) {
+	for _, element := range collectors {
+		element.RecordScalerErrorWithUID(namespace, scaledObject, scaledObjectUID, scaler, triggerIndex, metric, isScaledObject, err)
+	}
+}
+
+func RecordScaledObjectErrorWithUID(namespace string, scaledObject string, scaledObjectUID string, err error) {
+	for _, element := range collectors {
+		element.RecordScaledObjectErrorWithUID(namespace, scaledObject, scaledObjectUID, err)
 	}
 }
 

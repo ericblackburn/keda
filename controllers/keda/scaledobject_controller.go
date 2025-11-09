@@ -330,21 +330,18 @@ func (r *ScaledObjectReconciler) reconcileScaledObject(ctx context.Context, logg
 	return kedav1alpha1.ScaledObjectConditionReadySuccessMessage, nil
 }
 
-// ensureScaledObjectLabel ensures that scaledobject.keda.sh/name=<scaledObject.Name> label exist in the ScaledObject
-// This is how the MetricsAdapter will know which ScaledObject a metric is for when the HPA queries it.
+// ensureScaledObjectLabel is deprecated - we now use UID-based identification
+// DEPRECATED: This function can be removed in v2.X after backwards compatibility period
+// Previously added scaledobject.keda.sh/name label which could exceed 63 char limit
 func (r *ScaledObjectReconciler) ensureScaledObjectLabel(ctx context.Context, logger logr.Logger, scaledObject *kedav1alpha1.ScaledObject) error {
-	if scaledObject.Labels == nil {
-		scaledObject.Labels = map[string]string{kedav1alpha1.ScaledObjectOwnerAnnotation: scaledObject.Name}
-	} else {
-		value, found := scaledObject.Labels[kedav1alpha1.ScaledObjectOwnerAnnotation]
-		if found && value == scaledObject.Name {
-			return nil
-		}
-		scaledObject.Labels[kedav1alpha1.ScaledObjectOwnerAnnotation] = scaledObject.Name
-	}
-
-	logger.V(1).Info("Adding \"scaledobject.keda.sh/name\" label on ScaledObject", "value", scaledObject.Name)
-	return r.Client.Update(ctx, scaledObject)
+	// No longer adding the name label for new ScaledObjects
+	// UID-based identification is now used instead (scaledobject.keda.sh/uid)
+	// This prevents label value length constraint violations (63 chars)
+	
+	// BACKWARDS COMPATIBILITY: If the label exists on existing objects, we leave it alone
+	// but we don't add it for new objects or update it
+	logger.V(1).Info("Skipping scaledobject.keda.sh/name label (deprecated, using UID-based identification)")
+	return nil
 }
 
 func (r *ScaledObjectReconciler) checkIfTargetResourceReachPausedCount(ctx context.Context, logger logr.Logger, scaledObject *kedav1alpha1.ScaledObject) bool {

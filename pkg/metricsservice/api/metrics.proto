@@ -36,6 +36,7 @@ message ScaledObjectRef {
     string name = 1;
     string namespace = 2;
     string metricName = 3;
+    string uid = 4;
 }
 
 message RawMetricsRequest {

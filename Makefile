@@ -173,9 +173,9 @@ clientset-generate: ## Generate client-go clientset, listers and informers.
 	./hack/update-codegen.sh
 
 proto-gen: protoc-gen ## Generate Liiklus, ExternalScaler and MetricsService proto
-	PATH="$(LOCALBIN):$(PATH)" protoc -I vendor --proto_path=hack LiiklusService.proto --go_out=pkg/scalers/liiklus --go-grpc_out=pkg/scalers/liiklus
-	PATH="$(LOCALBIN):$(PATH)" protoc -I vendor --proto_path=pkg/scalers/externalscaler externalscaler.proto --go_out=pkg/scalers/externalscaler --go-grpc_out=pkg/scalers/externalscaler
-	PATH="$(LOCALBIN):$(PATH)" protoc -I vendor --proto_path=pkg/metricsservice/api metrics.proto --go_out=pkg/metricsservice/api --go-grpc_out=pkg/metricsservice/api
+	PATH="$(LOCALBIN):$(PATH)" $(PROTOC) -I vendor --proto_path=hack hack/LiiklusService.proto --go_out=pkg/scalers/liiklus --go-grpc_out=pkg/scalers/liiklus
+	PATH="$(LOCALBIN):$(PATH)" $(PROTOC) -I vendor --proto_path=pkg/scalers/externalscaler pkg/scalers/externalscaler/externalscaler.proto --go_out=pkg/scalers/externalscaler --go-grpc_out=pkg/scalers/externalscaler
+	PATH="$(LOCALBIN):$(PATH)" $(PROTOC) -I vendor --proto_path=pkg/metricsservice/api pkg/metricsservice/api/metrics.proto --go_out=pkg/metricsservice/api --go-grpc_out=pkg/metricsservice/api
 
 .PHONY: mockgen-gen
 mockgen-gen: mockgen pkg/mock/mock_scaling/mock_interface.go pkg/mock/mock_scaling/mock_executor/mock_interface.go pkg/mock/mock_scaler/mock_scaler.go pkg/mock/mock_scale/mock_interfaces.go pkg/mock/mock_client/mock_interfaces.go pkg/scalers/liiklus/mocks/mock_liiklus.go pkg/mock/mock_secretlister/mock_interfaces.go pkg/mock/mock_eventemitter/mock_interface.go
@@ -342,6 +342,7 @@ CONTROLLER_GEN ?= $(LOCALBIN)/controller-gen
 ENVTEST ?= $(LOCALBIN)/setup-envtest
 GOTESTSUM ?= $(LOCALBIN)/gotestsum
 MOCKGEN ?= $(LOCALBIN)/mockgen
+PROTOC ?= $(LOCALBIN)/bin/protoc
 PROTOCGEN ?= $(LOCALBIN)/protoc-gen-go
 PROTOCGEN_GRPC ?= $(LOCALBIN)/protoc-gen-go-grpc
 GO_JUNIT_REPORT ?= $(LOCALBIN)/go-junit-report
